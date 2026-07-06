@@ -25,7 +25,8 @@ script.md ──▶ voiceover (edge-tts) ──▶ public-domain images (Openver
 pipeline/
   config.py         env-driven settings + Docker-secret reader
   script_parser.py  parses the script .md format into segments
-  script_gen.py     optional: generate a script via the Claude Messages API
+  script_gen.py     optional: generate a script via a chosen LLM provider
+  providers/        pluggable LLM backends: claude / gemini / qwen
   tts.py            edge-tts voiceover, one mp3 per segment
   visuals.py        Openverse + Wikimedia public-domain image search/download
   assemble.py       ffmpeg: Ken Burns clips -> concat -> music -> loudnorm
@@ -80,19 +81,37 @@ docker compose run --rm video --script scripts/ep01_vanished_places.md
 # results appear in ./output/
 ```
 
-## Optional: generate a script with Claude
+## Optional: generate a script with an AI (Claude / Gemini / Qwen)
 
-Needs an Anthropic API key. Put it in a Docker secret (never in git):
+Pick the writer with `SCRIPT_PROVIDER` and install only that provider's SDK.
+Each provider uses its own official SDK and its own API key:
+
+| `SCRIPT_PROVIDER` | SDK (`pip install`) | Key env var / secret file | Model env var (default) |
+|---|---|---|---|
+| `claude` | `anthropic` | `ANTHROPIC_API_KEY` / `secrets/anthropic_api_key` | `CLAUDE_MODEL` (`claude-opus-4-8`) |
+| `gemini` | `google-genai` | `GEMINI_API_KEY` / `secrets/gemini_api_key` | `GEMINI_MODEL` (`gemini-2.5-flash`) |
+| `qwen` | `openai` | `DASHSCOPE_API_KEY` / `secrets/dashscope_api_key` | `QWEN_MODEL` (`qwen-plus`) |
+
+Qwen is reached through Alibaba DashScope's OpenAI-compatible endpoint (hence
+the `openai` SDK); switch region with `QWEN_BASE_URL`.
 
 ```bash
 mkdir -p secrets && umask 077
-printf '%s' 'sk-ant-...' > secrets/anthropic_api_key   # or export ANTHROPIC_API_KEY
-python -m pipeline.main --topic "sounds from the 1970s that disappeared"
+# put the key for the provider you chose, e.g. Gemini:
+printf '%s' 'AIza...' > secrets/gemini_api_key
+
+SCRIPT_PROVIDER=gemini python -m pipeline.main \
+    --topic "sounds from the 1970s that disappeared"
 ```
 
 The generated script is saved to `scripts/generated/` **for you to review and
-edit before rendering** — treat it as a draft, not a finished product. Uses
-`claude-opus-4-8` by default (override with `CLAUDE_MODEL`).
+edit before rendering** — treat it as a draft, not a finished product. Switch
+provider any time by changing `SCRIPT_PROVIDER`; the rest of the pipeline is
+identical.
+
+> **Docker note:** `docker-compose.yml` mounts a secret file per provider. For
+> providers you don't use, create empty placeholders so Compose doesn't error:
+> `touch secrets/anthropic_api_key secrets/gemini_api_key secrets/dashscope_api_key`.
 
 ## Optional: upload to YouTube
 

@@ -4,10 +4,15 @@ services:
     image: faceless-video:latest
     env_file: .env
     environment:
-      # Claude key via Docker secret (only needed for --topic generation).
+      # LLM keys via Docker secrets (only the one for your SCRIPT_PROVIDER is
+      # needed for --topic generation). Missing secret files are simply unused.
       ANTHROPIC_API_KEY_FILE: /run/secrets/anthropic_api_key
+      GEMINI_API_KEY_FILE: /run/secrets/gemini_api_key
+      DASHSCOPE_API_KEY_FILE: /run/secrets/dashscope_api_key
     secrets:
       - anthropic_api_key
+      - gemini_api_key
+      - dashscope_api_key
     volumes:
       - ./output:/app/output          # finished videos land here
       - ./assets:/app/assets          # your background music, custom images
@@ -22,3 +27,7 @@ services:
 secrets:
   anthropic_api_key:
     file: ./secrets/anthropic_api_key
+  gemini_api_key:
+    file: ./secrets/gemini_api_key
+  dashscope_api_key:
+    file: ./secrets/dashscope_api_key

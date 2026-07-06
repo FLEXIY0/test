@@ -1,8 +1,12 @@
 edge-tts>=6.1.0
 httpx>=0.27.0
 Pillow>=10.0.0
-# Optional — only needed for --topic (Claude script generation):
-anthropic>=0.40.0
+
+# Optional — script generation. Install ONLY the SDK for your SCRIPT_PROVIDER:
+anthropic>=0.40.0          # SCRIPT_PROVIDER=claude
+google-genai>=1.0.0        # SCRIPT_PROVIDER=gemini
+openai>=1.30.0             # SCRIPT_PROVIDER=qwen (OpenAI-compatible DashScope endpoint)
+
 # Optional — only needed for --upload (YouTube Data API):
 google-api-python-client>=2.100.0
 google-auth-oauthlib>=1.2.0

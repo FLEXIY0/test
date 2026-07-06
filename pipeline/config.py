@@ -43,9 +43,19 @@ class Settings:
     max_duration_s: float
     min_images: int
 
-    # --- script generation (optional, needs ANTHROPIC_API_KEY) ---
+    # --- script generation (optional) ---
+    script_provider: str       # claude | gemini | qwen
+    max_output_tokens: int
+    # Claude (Anthropic)
     anthropic_api_key: str
     claude_model: str
+    # Gemini (Google)
+    gemini_api_key: str
+    gemini_model: str
+    # Qwen (Alibaba DashScope, OpenAI-compatible endpoint)
+    qwen_api_key: str
+    qwen_model: str
+    qwen_base_url: str
 
     # --- paths ---
     output_dir: str
@@ -64,8 +74,18 @@ def load_settings() -> Settings:
         min_duration_s=_env_float("MIN_DURATION_S", 240.0),
         max_duration_s=_env_float("MAX_DURATION_S", 900.0),
         min_images=_env_int("MIN_IMAGES", 5),
+        script_provider=os.environ.get("SCRIPT_PROVIDER", "claude").strip().lower(),
+        max_output_tokens=_env_int("MAX_OUTPUT_TOKENS", 16000),
         anthropic_api_key=_read_secret("ANTHROPIC_API_KEY"),
         claude_model=os.environ.get("CLAUDE_MODEL", "claude-opus-4-8"),
+        gemini_api_key=_read_secret("GEMINI_API_KEY") or _read_secret("GOOGLE_API_KEY"),
+        gemini_model=os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
+        qwen_api_key=_read_secret("DASHSCOPE_API_KEY") or _read_secret("QWEN_API_KEY"),
+        qwen_model=os.environ.get("QWEN_MODEL", "qwen-plus"),
+        qwen_base_url=os.environ.get(
+            "QWEN_BASE_URL",
+            "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        ),
         output_dir=os.environ.get("OUTPUT_DIR", "./output"),
         assets_dir=os.environ.get("ASSETS_DIR", "./assets"),
     )
