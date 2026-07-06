@@ -1,0 +1,50 @@
+services:
+  arbitrage:
+    build: .
+    image: arbitrage-daemon:latest
+    restart: unless-stopped            # 24/7: Docker resurrects the daemon
+    env_file: .env                     # non-secret runtime configuration
+    environment:
+      # API keys arrive via Docker secrets, never via .env / image layers.
+      BINANCE_API_KEY_FILE: /run/secrets/binance_api_key
+      BINANCE_API_SECRET_FILE: /run/secrets/binance_api_secret
+      KRAKEN_API_KEY_FILE: /run/secrets/kraken_api_key
+      KRAKEN_API_SECRET_FILE: /run/secrets/kraken_api_secret
+    secrets:
+      - binance_api_key
+      - binance_api_secret
+      - kraken_api_key
+      - kraken_api_secret
+    volumes:
+      - arb-state:/app/state           # write-ahead journal survives restarts
+    ports:
+      - "127.0.0.1:8080:8080"          # health endpoint, loopback only
+    read_only: true                    # immutable rootfs; only /app/state writable
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+secrets:
+  binance_api_key:
+    file: ./secrets/binance_api_key
+  binance_api_secret:
+    file: ./secrets/binance_api_secret
+  kraken_api_key:
+    file: ./secrets/kraken_api_key
+  kraken_api_secret:
+    file: ./secrets/kraken_api_secret
+
+volumes:
+  arb-state:
