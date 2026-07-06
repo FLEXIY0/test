@@ -1,82 +1,136 @@
-# Cross-Exchange Arbitrage Daemon
+# Faceless Nostalgia Video Pipeline
 
-Autonomous, market-neutral spatial-arbitrage daemon: streams order books from
-multiple exchanges over official WebSocket APIs (ccxt.pro), prices
-fee-adjusted VWAP spreads across the full book depth, and executes
-simultaneous IOC buy/sell legs when the net edge clears a configurable
-threshold. Designed for unattended 24/7 operation under Docker.
+Turns a text script into an upload-ready YouTube video — voiceover, visuals,
+Ken Burns motion, thumbnail, metadata, and quality checks — with one command.
+Built for a **faceless nostalgia channel aimed at US viewers aged 55+**
+(vanished places, old objects, warm memories, optional faith/community themes),
+because that audience is the highest-value one for advertisers and the niche
+has low production cost per video.
 
-## Documentation
+Runs **free with no API keys** for the core pipeline (voiceover via Microsoft
+`edge-tts`, images from Openverse/Wikimedia public domain, assembly via
+`ffmpeg`). Claude script generation and YouTube upload are optional add-ons.
 
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — system topology and the
-  mathematical model (VWAP fill pricing, marginal-price sizing, fee/transfer
-  cost accounting, staleness gating).
-- [`docs/SECURITY.md`](docs/SECURITY.md) — API-key policy, Docker secrets,
-  container and host hardening.
+## What it does
+
+```
+script.md ──▶ voiceover (edge-tts) ──▶ public-domain images (Openverse/Wikimedia)
+          ──▶ ffmpeg Ken Burns clips ──▶ concat + music + loudnorm ──▶ final.mp4
+          ──▶ thumbnail.jpg ──▶ metadata.txt (+ image credits) ──▶ quality report
+```
 
 ## Layout
 
 ```
-arbitrage/
+pipeline/
   config.py         env-driven settings + Docker-secret reader
-  models.py         BookSnapshot / Opportunity / LegResult / TradeRecord
-  feeds.py          supervised WS order-book feeds, exponential back-off
-  engine.py         spread scanner: optimal size + fee-adjusted net edge
-  executor.py       dual-leg IOC execution, WAL journal, residual flattening
-  rebalancer.py     inventory skew monitor, transfers, profit sweep
-  health.py         /healthz endpoint for Docker HEALTHCHECK
-  main.py           task supervisor / entrypoint
-tests/              engine math unit tests
-Dockerfile          multi-stage, non-root, read-only-friendly
-docker-compose.yml  restart policy, secrets, hardening, log rotation
-.env.example        all runtime knobs (non-secret)
+  script_parser.py  parses the script .md format into segments
+  script_gen.py     optional: generate a script via the Claude Messages API
+  tts.py            edge-tts voiceover, one mp3 per segment
+  visuals.py        Openverse + Wikimedia public-domain image search/download
+  assemble.py       ffmpeg: Ken Burns clips -> concat -> music -> loudnorm
+  thumbnail.py      Pillow: cover image + big high-contrast title text
+  checks.py         quality gates (duration, streams, AI-disclosure reminder)
+  upload.py         optional: YouTube Data API v3 upload (private draft)
+  main.py           CLI entrypoint
+scripts/            your script files (ep01 sample included)
+tests/              parser unit tests
+Dockerfile          ffmpeg + fonts + python, non-root
+docker-compose.yml  volumes for output/assets/scripts/secrets, Claude secret
 ```
 
-## Quick start (paper trading — the default)
+## Script format
+
+One file per video. `# TITLE:` is required; the rest are optional.
+
+```
+# TITLE: 7 Places From Your Childhood That No Longer Exist
+# DESCRIPTION: Remember the mall fountain? ... #nostalgia #1970s
+# TAGS: nostalgia, 1970s, vanished america, remember when
+# THUMBNAIL_TEXT: GONE FOREVER
+
+[IMAGE: 1960s woolworth lunch counter interior black and white]
+Narration spoken over this image...
+
+[IMAGE: drive-in movie theater at dusk 1970s]
+Next segment's narration...
+```
+
+Each `[IMAGE: ...]` starts a segment. The narration under it is voiced, and its
+image is shown for exactly that narration's length. A ready sample episode is in
+`scripts/ep01_vanished_places.md`.
+
+## Quick start (free, no keys)
 
 ```bash
-cp .env.example .env                  # adjust venues/symbols/fees
-mkdir -p secrets && umask 077
-printf '%s' 'KEY'    > secrets/binance_api_key
-printf '%s' 'SECRET' > secrets/binance_api_secret
-printf '%s' 'KEY'    > secrets/kraken_api_key
-printf '%s' 'SECRET' > secrets/kraken_api_secret
-
-docker compose up -d --build
-curl -s localhost:8080/healthz | python3 -m json.tool   # feed freshness + PnL
-docker compose logs -f                                   # structured JSON events
+cp .env.example .env
+pip install edge-tts httpx Pillow      # core deps only
+python -m pipeline.main --script scripts/ep01_vanished_places.md
 ```
 
-`DRY_RUN=true` runs the entire pipeline against live market data with
-simulated fills and a real journal (`state/journal.ndjson`). Review paper
-PnL over a meaningful window before setting `DRY_RUN=false`.
+Output lands in `output/<slug>-<timestamp>/`: `final.mp4`, `thumbnail.jpg`,
+`metadata.txt` (with image credits), `report.json`. `ffmpeg` must be installed
+(`apt install ffmpeg` / `brew install ffmpeg`), or just use Docker below.
 
-Public order books stream without credentials, so paper mode works with
-empty secret files; live trading requires trade-scoped keys
-(see `docs/SECURITY.md`).
+### Docker
 
-## Going live — deliberate steps
+```bash
+docker compose build
+docker compose run --rm video --script scripts/ep01_vanished_places.md
+# results appear in ./output/
+```
 
-1. Verify your actual fee tier per venue and set `*_TAKER_FEE` accordingly —
-   the edge model is only as good as its fee inputs.
-2. Fund both venues with base *and* quote inventory (inventory mode needs
-   both sides pre-positioned).
-3. Set `DRY_RUN=false`, keep `ENABLE_WITHDRAWALS=false`, restart, observe.
-4. Only then consider `ENABLE_WITHDRAWALS=true` with a withdrawal-scoped,
-   address-allowlisted key for automated rebalancing and profit sweeps.
+## Optional: generate a script with Claude
+
+Needs an Anthropic API key. Put it in a Docker secret (never in git):
+
+```bash
+mkdir -p secrets && umask 077
+printf '%s' 'sk-ant-...' > secrets/anthropic_api_key   # or export ANTHROPIC_API_KEY
+python -m pipeline.main --topic "sounds from the 1970s that disappeared"
+```
+
+The generated script is saved to `scripts/generated/` **for you to review and
+edit before rendering** — treat it as a draft, not a finished product. Uses
+`claude-opus-4-8` by default (override with `CLAUDE_MODEL`).
+
+## Optional: upload to YouTube
+
+The pipeline uploads as a **PRIVATE draft** so you always review before
+publishing, and always sets the synthetic-media disclosure flag (required by
+YouTube's 2026 AI policy).
+
+1. Google Cloud Console → new project → enable **YouTube Data API v3**.
+2. OAuth consent screen → add your channel's Google account as a **test user**.
+3. Credentials → **OAuth client ID (Desktop app)** → download to
+   `secrets/client_secret.json`.
+4. `pip install google-api-python-client google-auth-oauthlib`
+5. `python -m pipeline.main --script scripts/ep01_vanished_places.md --upload`
+   (first run opens a browser for consent; token is cached in `secrets/`).
+
+## Honest notes on making this pay
+
+- **Target US/UK/CA/AU English audiences.** YouTube shows no ads to viewers in
+  Russia, so a Russian-language channel earns almost nothing — the English
+  script + US neural voice is deliberate.
+- **YouTube demonetizes low-effort mass-produced AI content.** This pipeline is
+  built so each video carries a real, hand-checkable script and curated image
+  queries — the "thin layer of genuine effort" that passes review. Don't run it
+  as a spam farm; that gets the channel demonetized, not rich.
+- **Monetization needs 1,000 subscribers + 4,000 watch hours.** That takes
+  months of consistent uploads; most channels never reach it. The payoff is
+  that a video keeps earning for years once it does.
+- **Facts must be real and content must be kind.** The niche works because it's
+  warm and honest. Never invent history, never fear-monger or push fake
+  health/finance claims at older viewers — that's both wrong and a fast route
+  to a channel strike.
+
+Nothing here is a get-rich-quick guarantee. It's a tool that removes the
+production grind so you can focus on picking good topics and posting
+consistently.
 
 ## Tests
 
 ```bash
 python -m pytest tests/ -q
 ```
-
-## Reality check
-
-The code is a complete, correct implementation of the strategy, but spatial
-arbitrage is a latency- and fee-sensitive business: realized edge depends on
-your fee tier, VPS placement relative to exchange gateways, and competition
-from faster participants. `MIN_EDGE_BPS`, fees, and paper-trading results —
-not hope — should drive the go-live decision. Nothing here is investment
-advice; comply with the exchanges' terms of service and your local
-regulations.

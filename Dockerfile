@@ -1,34 +1,29 @@
-# --- build stage: resolve dependencies into a clean prefix -----------------
-FROM python:3.12-slim-bookworm AS build
+FROM python:3.12-slim-bookworm
+
+# ffmpeg for assembly; fonts for thumbnails; ca-certificates for HTTPS APIs.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ffmpeg fonts-dejavu-core fonts-liberation ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 10001 creator
 
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-# --- runtime stage: minimal, non-root, read-only friendly ------------------
-FROM python:3.12-slim-bookworm
+COPY pipeline/ ./pipeline/
+COPY scripts/ ./scripts/
 
-# curl only for the HEALTHCHECK probe
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && useradd --create-home --uid 10001 arbbot
+RUN mkdir -p /app/output /app/assets /app/secrets \
+    && chown -R creator:creator /app/output /app/assets /app/secrets
+VOLUME ["/app/output", "/app/assets", "/app/secrets"]
 
-COPY --from=build /install /usr/local
-WORKDIR /app
-COPY arbitrage/ ./arbitrage/
-
-# Writable journal/state volume; everything else can be mounted read-only.
-RUN mkdir -p /app/state && chown -R arbbot:arbbot /app/state
-VOLUME ["/app/state"]
-
-USER arbbot
+USER creator
 ENV PYTHONUNBUFFERED=1 \
-    STATE_DIR=/app/state \
-    HEALTH_PORT=8080
+    OUTPUT_DIR=/app/output \
+    ASSETS_DIR=/app/assets
 
-EXPOSE 8080
-HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-    CMD curl -fsS http://127.0.0.1:8080/healthz || exit 1
-
-ENTRYPOINT ["python", "-m", "arbitrage.main"]
+# Default: render the bundled sample episode. Override the command to point at
+# your own script, e.g.:  docker compose run --rm video --script scripts/my.md
+ENTRYPOINT ["python", "-m", "pipeline.main"]
+CMD ["--script", "scripts/ep01_vanished_places.md"]
