@@ -1,7 +1,10 @@
-"""ffmpeg assembly: per-segment Ken Burns clips -> concat -> music + loudnorm.
+"""ffmpeg assembly: multi-image Ken Burns segments with crossfades.
 
-Every step shells out to ffmpeg/ffprobe (installed in the Docker image), so
-there are no fragile Python video dependencies.
+Each narration segment now shows several stills. Camera motion alternates
+between four variants (zoom in / zoom out / pan left / pan right) so a long
+video never feels static, and stills within a segment are joined with a short
+crossfade. Segments are concatenated with straight cuts (natural at narration
+boundaries), then music and -14 LUFS loudness normalization are applied.
 """
 
 from __future__ import annotations
@@ -37,29 +40,82 @@ def probe_duration(path: str) -> float:
     return float(proc.stdout.strip())
 
 
-def render_segment(
-    image: str, audio: str, out_path: str, settings: Settings
-) -> float:
-    """One still image + one narration mp3 -> a Ken Burns video clip."""
-    duration = probe_duration(audio)
-    frames = max(int(duration * settings.fps) + 1, settings.fps)
+def _motion_filter(variant: int, frames: int, settings: Settings) -> str:
+    """One of four Ken Burns variants. `variant` cycles globally so adjacent
+    stills always move differently."""
     w, h = settings.width, settings.height
-    # Oversample before zoompan to avoid jitter, slow push-in capped at 1.15x.
-    vf = (
-        f"scale={w * 4 // 3}:{h * 4 // 3}:force_original_aspect_ratio=increase,"
-        f"crop={w * 4 // 3}:{h * 4 // 3},"
-        f"zoompan=z='min(zoom+0.0006,1.15)'"
-        f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
-        f":d={frames}:s={w}x{h}:fps={settings.fps},"
-        f"format=yuv420p"
+    ow, oh = w * 4 // 3, h * 4 // 3   # oversample to avoid zoompan jitter
+    base = (
+        f"scale={ow}:{oh}:force_original_aspect_ratio=increase,"
+        f"crop={ow}:{oh},"
     )
-    _run([
-        "ffmpeg", "-y", "-loop", "1", "-i", image, "-i", audio,
-        "-vf", vf, "-t", f"{duration:.3f}",
+    center = "x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+    variants = [
+        # slow push-in
+        f"zoompan=z='min(zoom+0.0008,1.18)':{center}",
+        # slow pull-out
+        f"zoompan=z='if(lte(on,1),1.18,max(1.001,zoom-0.0008))':{center}",
+        # pan left -> right at fixed zoom
+        f"zoompan=z='1.12':x='(iw-iw/zoom)*on/{frames}':y='ih/2-(ih/zoom/2)'",
+        # pan right -> left at fixed zoom
+        f"zoompan=z='1.12':x='(iw-iw/zoom)*(1-on/{frames})':y='ih/2-(ih/zoom/2)'",
+    ]
+    motion = variants[variant % len(variants)]
+    return (
+        f"{base}{motion}:d={frames}:s={w}x{h}:fps={settings.fps},"
+        f"format=yuv420p,setsar=1"
+    )
+
+
+def render_segment(
+    images: list[str], audio: str, out_path: str,
+    settings: Settings, motion_offset: int,
+) -> float:
+    """Several stills + one narration mp3 -> one video clip.
+
+    Stills split the narration time evenly and crossfade into each other;
+    total video length equals the audio length exactly.
+    """
+    duration = probe_duration(audio)
+    n = len(images)
+    fade = settings.xfade_s if n > 1 else 0.0
+    # xfade overlaps consume fade seconds per joint, so each clip must be
+    # slightly longer than duration/n for the joined result to equal duration.
+    clip_d = (duration + fade * (n - 1)) / n
+    clip_d = max(clip_d, fade + 0.5)
+    frames = max(int(clip_d * settings.fps) + 1, settings.fps)
+
+    cmd: list[str] = ["ffmpeg", "-y"]
+    for image in images:
+        cmd += ["-loop", "1", "-t", f"{clip_d:.3f}", "-i", image]
+    cmd += ["-i", audio]
+
+    parts = []
+    for i in range(n):
+        parts.append(f"[{i}:v]{_motion_filter(motion_offset + i, frames, settings)}[v{i}]")
+    if n == 1:
+        last = "[v0]"
+    else:
+        prev = "[v0]"
+        for i in range(1, n):
+            offset = i * (clip_d - fade)
+            out_label = f"[x{i}]"
+            parts.append(
+                f"{prev}[v{i}]xfade=transition=fade:duration={fade:.3f}"
+                f":offset={offset:.3f}{out_label}"
+            )
+            prev = out_label
+        last = prev
+
+    cmd += [
+        "-filter_complex", ";".join(parts),
+        "-map", last, "-map", f"{n}:a",
+        "-t", f"{duration:.3f}",
         "-c:v", "libx264", "-preset", "medium", "-crf", "20",
         "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-ac", "2",
-        "-shortest", out_path,
-    ])
+        out_path,
+    ]
+    _run(cmd)
     return duration
 
 
@@ -101,19 +157,25 @@ def finalize(video_in: str, out_path: str, settings: Settings) -> None:
 
 
 def assemble_video(
-    images: list[str], audios: list[str], workdir: str, out_path: str, settings: Settings
-) -> float:
-    """Full assembly; returns total duration in seconds."""
-    if len(images) != len(audios):
-        raise ValueError(f"images ({len(images)}) != audio segments ({len(audios)})")
-    total = 0.0
+    image_sets: list[list[str]], audios: list[str],
+    workdir: str, out_path: str, settings: Settings,
+) -> tuple[float, list[float]]:
+    """Full assembly. Returns (total duration, per-segment durations) — the
+    per-segment durations feed subtitle timestamp offsets."""
+    if len(image_sets) != len(audios):
+        raise ValueError(f"image sets ({len(image_sets)}) != audio segments ({len(audios)})")
+    durations: list[float] = []
     clip_paths = []
-    for i, (image, audio) in enumerate(zip(images, audios)):
+    motion_offset = 0
+    for i, (images, audio) in enumerate(zip(image_sets, audios)):
         clip = os.path.join(workdir, f"clip_{i:03d}.mp4")
-        total += render_segment(image, audio, clip, settings)
+        durations.append(
+            render_segment(images, audio, clip, settings, motion_offset)
+        )
+        motion_offset += len(images)   # keep the motion variety rolling
         clip_paths.append(clip)
-        logger.info("rendered clip %d/%d", i + 1, len(images))
+        logger.info("rendered clip %d/%d (%d stills)", i + 1, len(image_sets), len(images))
     merged = os.path.join(workdir, "merged.mp4")
     concat_segments(clip_paths, merged, workdir)
     finalize(merged, out_path, settings)
-    return total
+    return sum(durations), durations

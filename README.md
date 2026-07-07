@@ -14,8 +14,11 @@ Runs **free with no API keys** for the core pipeline (voiceover via Microsoft
 ## What it does
 
 ```
-script.md ──▶ voiceover (edge-tts) ──▶ public-domain images (Openverse/Wikimedia)
-          ──▶ ffmpeg Ken Burns clips ──▶ concat + music + loudnorm ──▶ final.mp4
+script.md ──▶ voiceover + word timings (edge-tts)
+          ──▶ image candidates (Library of Congress / Openverse / Wikimedia)
+          ──▶ [optional human review: delete bad candidates, add your own]
+          ──▶ 2-3 stills per segment, varied Ken Burns motion, crossfades
+          ──▶ concat + music + -14 LUFS loudnorm ──▶ final.mp4 + final.srt
           ──▶ thumbnail.jpg ──▶ metadata.txt (+ image credits) ──▶ quality report
 ```
 
@@ -27,9 +30,10 @@ pipeline/
   script_parser.py  parses the script .md format into segments
   script_gen.py     optional: generate a script via a chosen LLM provider
   providers/        pluggable LLM backends: claude / gemini / qwen
-  tts.py            edge-tts voiceover, one mp3 per segment
-  visuals.py        Openverse + Wikimedia public-domain image search/download
-  assemble.py       ffmpeg: Ken Burns clips -> concat -> music -> loudnorm
+  tts.py            edge-tts voiceover + word timings, one mp3 per segment
+  visuals.py        LoC/Openverse/Wikimedia candidate download + selection
+  subtitles.py      .srt generation from edge-tts word boundaries
+  assemble.py       ffmpeg: multi-still Ken Burns + crossfades -> music -> loudnorm
   thumbnail.py      Pillow: cover image + big high-contrast title text
   checks.py         quality gates (duration, streams, AI-disclosure reminder)
   upload.py         optional: YouTube Data API v3 upload (private draft)
@@ -69,9 +73,24 @@ pip install edge-tts httpx Pillow      # core deps only
 python -m pipeline.main --script scripts/ep01_vanished_places.md
 ```
 
-Output lands in `output/<slug>-<timestamp>/`: `final.mp4`, `thumbnail.jpg`,
-`metadata.txt` (with image credits), `report.json`. `ffmpeg` must be installed
-(`apt install ffmpeg` / `brew install ffmpeg`), or just use Docker below.
+Output lands in `output/<slug>-<timestamp>/`: `final.mp4`, `final.srt`
+(subtitles from real word timings), `thumbnail.jpg`, `metadata.txt` (with image
+credits), `report.json`. `ffmpeg` must be installed (`apt install ffmpeg` /
+`brew install ffmpeg`), or just use Docker below.
+
+### Recommended: human image curation (`--review`)
+
+Automatic image search is decent but not perfect — archive search relevance
+varies. For publishable quality, curate the visuals; it takes ~5 minutes:
+
+```bash
+python -m pipeline.main --script scripts/ep01_vanished_places.md --review
+# 1. voiceover + candidates are downloaded, then the run STOPS
+# 2. open output/<run>/work/candidates/seg_NNN/ and DELETE images you dislike
+#    (drop in your own .jpg files if you have better ones)
+python -m pipeline.main --resume output/<run>
+# picks the remaining images (largest first) and finishes the video
+```
 
 ### Docker
 

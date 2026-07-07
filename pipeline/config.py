@@ -38,6 +38,12 @@ class Settings:
     music_file: str            # optional path to background music (user-provided)
     music_volume: float        # 0.0-1.0, ducked under narration
 
+    # --- visuals ---
+    images_per_segment: int    # visual variety: 2-3 stills per narration segment
+    candidates_per_query: int  # how many candidate images to download per query
+    min_image_width: int       # reject candidates narrower than this
+    xfade_s: float             # crossfade between stills within a segment
+
     # --- quality gates ---
     min_duration_s: float
     max_duration_s: float
@@ -71,6 +77,10 @@ def load_settings() -> Settings:
         fps=_env_int("VIDEO_FPS", 30),
         music_file=os.environ.get("MUSIC_FILE", ""),
         music_volume=_env_float("MUSIC_VOLUME", 0.10),
+        images_per_segment=_env_int("IMAGES_PER_SEGMENT", 2),
+        candidates_per_query=_env_int("CANDIDATES_PER_QUERY", 4),
+        min_image_width=_env_int("MIN_IMAGE_WIDTH", 800),
+        xfade_s=_env_float("XFADE_S", 0.6),
         min_duration_s=_env_float("MIN_DURATION_S", 240.0),
         max_duration_s=_env_float("MAX_DURATION_S", 900.0),
         min_images=_env_int("MIN_IMAGES", 5),

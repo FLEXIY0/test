@@ -52,30 +52,53 @@ fences, no closing remarks):
 """
 
 
+MAX_ATTEMPTS = 3
+
+
 def generate_script(topic: str, settings: Settings) -> ScriptDoc:
-    """Generate a parsed script for `topic`. Raises RuntimeError on failure."""
+    """Generate a parsed script for `topic`, retrying on format errors.
+
+    A model occasionally breaks the output format; instead of dying, the
+    request is retried with the parse error appended so the model can fix it.
+    """
     provider = get_provider(settings)
     user = f"Write the full video script for this topic: {topic}"
-
     logger.info("generating script via %s (%s)", provider.name, provider.model)
-    try:
-        raw = provider.generate(SYSTEM_PROMPT, user)
-    except ProviderError as exc:
-        raise RuntimeError(str(exc)) from exc
 
-    raw = _strip_fences(raw)
-    try:
-        doc = parse_script(raw)
-    except ScriptFormatError as exc:
-        raise RuntimeError(
-            f"{provider.name} produced a script that failed to parse: {exc}"
-        ) from exc
+    last_error: Exception | None = None
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            raw = provider.generate(SYSTEM_PROMPT, user)
+        except ProviderError as exc:
+            raise RuntimeError(str(exc)) from exc
 
-    logger.info(
-        "generated '%s' via %s: %d segments, %d words",
-        doc.title, provider.name, len(doc.segments), doc.word_count,
+        try:
+            doc = parse_script(_strip_fences(raw))
+        except ScriptFormatError as exc:
+            last_error = exc
+            logger.warning(
+                "attempt %d/%d: %s output failed to parse (%s) — retrying",
+                attempt, MAX_ATTEMPTS, provider.name, exc,
+            )
+            user = (
+                f"Write the full video script for this topic: {topic}\n\n"
+                f"IMPORTANT: your previous attempt was rejected by the parser "
+                f"with this error: {exc}. Follow the output format EXACTLY as "
+                f"specified — headers first, then [IMAGE: ...] segments, no "
+                f"other text."
+            )
+            continue
+
+        logger.info(
+            "generated '%s' via %s: %d segments, %d words",
+            doc.title, provider.name, len(doc.segments), doc.word_count,
+        )
+        return doc
+
+    raise RuntimeError(
+        f"{provider.name} failed to produce a parseable script after "
+        f"{MAX_ATTEMPTS} attempts: {last_error}"
     )
-    return doc
 
 
 def _strip_fences(text: str) -> str:
