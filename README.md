@@ -100,6 +100,17 @@ docker compose run --rm video --script scripts/ep01_vanished_places.md
 # results appear in ./output/
 ```
 
+### Alloy preview
+
+Alloy sessions include a lightweight dashboard for inspecting ready scripts and
+recent render results. It uses the pipeline's existing Docker image and does not
+require API keys:
+
+```bash
+docker compose -f docker-compose.alloy.yaml up --build -d
+# dashboard listens on http://localhost:3000
+```
+
 ## Optional: generate a script with an AI (Claude / Gemini / Qwen)
 
 Pick the writer with `SCRIPT_PROVIDER` and install only that provider's SDK.

@@ -1,0 +1,24 @@
+services:
+  site:
+    build:
+      context: .
+      network: host
+    image: faceless-video:alloy
+    working_dir: /app
+    network_mode: host
+    entrypoint: ["python", "-m", "pipeline.web"]
+    environment:
+      APP_ROOT: /app
+      OUTPUT_DIR: /app/output
+      WEB_HOST: 0.0.0.0
+      WEB_PORT: 3000
+      IS_ALLOY: ${IS_ALLOY:-true}
+    volumes:
+      - .:/app
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3000/healthz')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
